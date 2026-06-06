@@ -356,9 +356,8 @@ f_mac() {
 		# generate random LAA mac (second nibble forced to 2/6/A/E)
 		#
 		elif [ "${trm_randomize}" = "1" ]; then
-			result="$(hexdump -n6 -ve '/1 "%.02X "' /dev/urandom 2>/dev/null |
-				"${trm_awkcmd}" -v local="2,6,A,E" 'BEGIN{srand()}NR==1{split(local,b,",");
-				seed=int(rand()*4+1);printf "%s%s:%s:%s:%s:%s:%s",substr($1,0,1),b[seed],$2,$3,$4,$5,$6}')"
+			result="$(set -- $(hexdump -n6 -e '6/1 "%u "' /dev/urandom 2>/dev/null)
+				printf "%02X:%02X:%02X:%02X:%02X:%02X" "$(( ($1 & 0xFC) | 0x02 ))" "$2" "$3" "$4" "$5" "$6")"
 			uci_set "wireless" "${section}" "macaddr" "${result}"
 
 		# clear override, fall back to driver-assigned mac via ubus
