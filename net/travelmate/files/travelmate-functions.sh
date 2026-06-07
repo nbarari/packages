@@ -1453,6 +1453,19 @@ f_main() {
 									f_check "sta" "false" "${sta_radio}" "${sta_essid}" "${sta_bssid}"
 									if [ "${trm_ifstatus}" = "true" ]; then
 										rm -f "${trm_mailfile}"
+
+										# ephemeral random mac: when randomizing with no
+										# user-configured mac, f_mac's random mac has already
+										# been applied to the live radio by f_check/f_wifi
+										# (wifi reload reads the staged delta). Delete it from
+										# the wireless config before committing so it is never
+										# written to flash. uci_remove (not a staged-only
+										# revert) also clears any mac persisted by an earlier
+										# run, so the override does not accumulate across
+										# reconnects. The guard mirrors f_mac's own randomize
+										# condition (both read travelmate's uplink macaddr via
+										# f_getval), so a user-configured mac still persists.
+										[ "${trm_randomize}" = "1" ] && [ -z "$(f_getval "macaddr")" ] && uci_remove "wireless" "${section}" "macaddr" 2>/dev/null
 										[ -n "$(uci -q changes "wireless")" ] && uci_commit "wireless"
 										f_log "info" "connected to uplink '${sta_radio}/${sta_essid}/${sta_bssid:-"-"}' with mac '${sta_mac:-"-"}' (${retrycnt}/${retry_display})"
 										f_vpn "enable"
