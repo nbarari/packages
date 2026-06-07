@@ -1,0 +1,35 @@
+# OpenWrt base-system and travelmate-dependency commands that are NOT busybox
+# applets (those live in busybox-applets.txt). Every entry below was verified
+# present in PATH on the reference target (GL-MT3000, OpenWrt 25.12.2):
+#
+#   for d in /bin /sbin /usr/bin /usr/sbin; do ls "$d"; done | sort -u
+#
+# Together with busybox-applets.txt this is the command surface a stock
+# "OpenWrt + travelmate" install guarantees. Keep it tight: it is the base
+# system plus travelmate's declared dependencies, NOT whatever extra packages
+# happen to be installed on one device -- an over-broad list would let a real
+# missing-command bug through.
+
+# --- OpenWrt base system (base-files, ubox, ubus, netifd, uci, rpcd, ucode) ---
+uci
+ubus
+rpcd
+ifstatus
+ifup
+ifdown
+ip
+ipcalc.sh
+nslookup
+ntpd
+wifi
+validate_data
+board_detect
+ucode
+lua
+
+# --- travelmate declared dependencies (net/travelmate/Makefile DEPENDS) ---
+# +curl +iwinfo +jshn +jsonfilter +rpcd +rpcd-mod-rpcsys  (ca-bundle: no binary)
+curl
+iwinfo
+jshn
+jsonfilter
