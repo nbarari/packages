@@ -1,0 +1,45 @@
+---
+# Device-shell lint for the travelmate package. This repo is a fork of
+# openwrt/packages; hooks are deliberately scoped to net/travelmate/files/ so
+# they never touch the rest of the monorepo or reformat upstream sources.
+#
+# The travelmate package is pure POSIX shell that runs under busybox ash on the
+# router. The gate therefore targets the *device* shell, not the build host:
+#   1. busybox `ash -n`  - syntax in the exact shell the device runs.
+#   2. device-command presence - catches commands that exist on a dev box but
+#      not on the OpenWrt target (the "od-class" bug: `od` is not a busybox
+#      applet, so it silently produced a constant MAC at runtime).
+#   3. shellcheck - kept for completeness / future files (see note below).
+#
+# Mirrors the pinned-SHA pre-commit convention from nbarari/travelmate and
+# homelab-iac. CI runs this via .github/workflows/travelmate-lint.yml.
+# Run locally with `pre-commit run --all-files` (needs busybox + python3).
+
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  # ShellCheck honouring each file's shebang (or --shell=sh for the shebang-less
+  # function library). NOTE: currently a no-op -- every travelmate file carries
+  # `# shellcheck disable=all` upstream, which ShellCheck honours. Kept so that a
+  # future file *without* that directive is covered, and to document intent. The
+  # real coverage comes from the two local hooks below.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: ["--shell=sh"]
+        files: ^net/travelmate/files/(travelmate-functions\.sh|.*\.login)$
+
+  - repo: local
+    hooks:
+      - id: busybox-ash-syntax
+        name: busybox ash -n (device shell syntax)
+        entry: .github/lint/ash-syntax-check.sh
+        language: script
+        files: ^net/travelmate/files/(travelmate-functions\.sh|.*\.login)$
+
+      - id: device-command-presence
+        name: device command presence (catch od-class missing-applet bugs)
+        entry: .github/lint/check-device-commands.py
+        language: script
+        files: ^net/travelmate/files/(travelmate-functions\.sh|.*\.login)$
