@@ -48,6 +48,7 @@ trm_pidfile="${trm_rundir}/travelmate.pid"
 trm_scanfile="${trm_rundir}/travelmate.scan"
 trm_tmpfile="${trm_rundir}/travelmate.tmp"
 trm_rtfile="${trm_rundir}/travelmate.runtime.json"
+trm_rebindfile="${trm_rundir}/travelmate.rebind"
 trm_captiveurl="http://detectportal.firefox.com"
 trm_useragent="Mozilla/5.0 (X11; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0"
 
@@ -823,6 +824,28 @@ f_net() {
 	f_log "debug" "f_net       ::: timeout: $((trm_maxwait / 6)), cp (json/html/js): ${json_cp:-"-"}/${html_cp:-"-"}/${js_cp:-"-"}, result: ${result}, error (rc/msg): ${json_ec}/${err_msg:-"-"}, url: ${trm_captiveurl}"
 }
 
+# remove travelmate-added captive portal domains from the dnsmasq rebind whitelist
+#
+f_rmrebind() {
+	local domain changed="0"
+
+	[ ! -s "${trm_rebindfile}" ] && return 0
+	if [ -x "/etc/init.d/dnsmasq" ] && [ -f "/etc/config/dhcp" ]; then
+		while read -r domain; do
+			[ -n "${domain}" ] && uci_remove_list "dhcp" "@dnsmasq[0]" "rebind_domain" "${domain}"
+		done <"${trm_rebindfile}"
+		if [ -n "$(uci -q changes "dhcp")" ]; then
+			uci_commit "dhcp"
+			/etc/init.d/dnsmasq reload
+			changed="1"
+			f_log "info" "captive portal domains removed from dhcp rebind whitelist"
+		fi
+	fi
+	rm -f "${trm_rebindfile}"
+
+	f_log "debug" "f_rmrebind  ::: rebindfile: ${trm_rebindfile}, changed: ${changed}"
+}
+
 # check interface status
 #
 f_check() {
@@ -888,6 +911,7 @@ f_check() {
 			# rev mode: drop connection state and exit
 			#
 			elif [ "${mode}" = "rev" ]; then
+				f_rmrebind
 				trm_connection=""
 				trm_ifstatus="${status}"
 				break
@@ -941,6 +965,7 @@ f_check() {
 									*" ${cp_domain} "*) break ;;
 									esac
 									uci_add_list "dhcp" "@dnsmasq[0]" "rebind_domain" "${cp_domain}"
+									printf "%s\n" "${cp_domain}" >>"${trm_rebindfile}"
 									[ -n "$(uci -q changes "dhcp")" ] && uci_commit "dhcp"
 									/etc/init.d/dnsmasq reload
 									f_log "info" "captive portal domain '${cp_domain}' added to to dhcp rebind whitelist"
