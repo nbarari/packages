@@ -678,9 +678,22 @@ f_addsta() {
 		esac
 	done
 
+	# derive the auto-add count from the existing 'opensta' uplink sections, so the
+	# quota self-corrects when sections are removed (replaces the persistent
+	# 'trm_autoaddcnt' counter, which never reset and raced the LuCI writer)
+	#
+	cnt="0"
+	config_cb() {
+		local type="${1}" name="${2}"
+
+		[ "${type}" = "uplink" ] && [ "$(uci_get "travelmate.${name}.opensta")" = "1" ] &&
+			cnt="$((cnt + 1))"
+	}
+	config_load travelmate
+
 	# within quota, scan existing wifi-iface sections for duplicates and count offset
 	#
-	if [ "${trm_maxautoadd}" = "0" ] || [ "${trm_autoaddcnt:-0}" -lt "${trm_maxautoadd}" ]; then
+	if [ "${trm_maxautoadd}" = "0" ] || [ "${cnt}" -lt "${trm_maxautoadd}" ]; then
 		config_cb() {
 			local type="${1}" name="${2}"
 
@@ -739,12 +752,8 @@ f_addsta() {
 			EOC
 		fi
 
-		# bump autoadd counter, commit, reload wifi, signal UI reload
+		# commit, reload wifi, signal UI reload
 		#
-		cnt="$(uci_get "travelmate" "global" "trm_autoaddcnt" "0")"
-		cnt="$((cnt + 1))"
-		uci_set "travelmate" "global" "trm_autoaddcnt" "${cnt}"
-
 		[ -n "$(uci -q changes "travelmate")" ] && uci_commit "travelmate"
 		[ -n "$(uci -q changes "wireless")" ] && uci_commit "wireless"
 		f_wifi
@@ -755,7 +764,7 @@ f_addsta() {
 		printf "%s" "${wifi_cfg}-${radio}"
 	fi
 
-	f_log "debug" "f_addsta    ::: radio: ${radio:-"-"}, essid: ${essid}, autoaddcnt/maxautoadd: ${cnt:-"${trm_autoaddcnt}"}/${trm_maxautoadd:-"-"}, new_uplink: ${new_uplink}, offset: ${offset}"
+	f_log "debug" "f_addsta    ::: radio: ${radio:-"-"}, essid: ${essid}, opensta/maxautoadd: ${cnt}/${trm_maxautoadd:-"-"}, new_uplink: ${new_uplink}, offset: ${offset}"
 }
 
 # check net status
