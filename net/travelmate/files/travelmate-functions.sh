@@ -217,12 +217,18 @@ f_wifi() {
 	#
 	"${trm_wificmd}" reload
 	for radio in ${trm_radiolist}; do
+
+		# per-radio reload budget: each radio gets its own trm_maxwait seconds so a
+		# slow/dead radio can't starve the ones after it (finding 2.2)
+		#
+		timeout="0"
 		while :; do
 
-			# global timeout abort across all radios
+			# this radio is out of budget: give up on it and move to the next radio,
+			# don't abort the whole radio list
 			#
 			if [ "${timeout}" -ge "${trm_maxwait}" ]; then
-				break 2
+				break
 			fi
 			status="$("${trm_wificmd}" status 2>/dev/null)"
 			parse="$(printf "%s" "${status}" | "${trm_jsoncmd}" -e "@.${radio}.up" -e "@.${radio}.pending")"
@@ -248,7 +254,7 @@ f_wifi() {
 		done
 	done
 
-	# settle delay if all radios came up within budget
+	# settle delay if the last polled radio came up within its budget
 	#
 	if [ "${timeout}" -lt "${trm_maxwait}" ]; then
 		sleep "$((trm_maxwait / 6))"
