@@ -107,6 +107,7 @@ automatically (re)connnects to configured APs/hotspots as they become available.
 | trm_timeout        | 60                                 | overall retry timeout in seconds                                                                      |
 | trm_maxautoadd     | 5                                  | limit the max. number of automatically added open uplinks. To disable this limitation set it to '0'   |
 | trm_captiveurl     | http://detectportal.firefox.com    | custom/pre-configured provider URLs that will be used for connectivity- and captive portal checks     |
+| trm_captive_strict | 0, disabled                        | force the captive check over https so a portal/on-path attacker can't spoof a clean reply (no auto-login) |
 | trm_useragent      | Mozilla/5.0 ...                    | pre-configured user agents that will be used for connectivity- and captive portal checks              |
 | trm_nice           | 0, normal priority                 | change the priority of the travelmate background processing                                           |
 | trm_mail           | 0, disabled                        | sends notification e-mails after every succesful uplink connect                                       |

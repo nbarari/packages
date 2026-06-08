@@ -13,6 +13,7 @@ trm_enabled="0"
 trm_debug="0"
 trm_laniface=""
 trm_captive="1"
+trm_captive_strict="0"
 trm_proactive="0"
 trm_vpn="0"
 trm_netcheck="0"
@@ -770,11 +771,16 @@ f_addsta() {
 # check net status
 #
 f_net() {
-	local parse err_msg raw json_raw html_raw html_cp js_cp json_ec json_rc json_cp json_cp_url json_ed result="net nok"
+	local parse err_msg raw json_raw html_raw html_cp js_cp json_ec json_rc json_cp json_cp_url json_ed url="${trm_captiveurl}" result="net nok"
+
+	# strict mode: force https so a captive portal or on-path attacker cannot
+	# spoof a clean http 200 to fake internet availability (no cp auto-login)
+	#
+	[ "${trm_captive_strict}" = "1" ] && url="https://${trm_captiveurl#http*://}"
 
 	# fetch captive-detection url, curl appends '%{json}' metadata after the response body
 	#
-	raw="$("${trm_fetchcmd}" ${trm_fetchparm} --user-agent "${trm_useragent}" --header "Cache-Control: no-cache, no-store, must-revalidate, max-age=0" --write-out "%{json}" "${trm_captiveurl}")"
+	raw="$("${trm_fetchcmd}" ${trm_fetchparm} --user-agent "${trm_useragent}" --header "Cache-Control: no-cache, no-store, must-revalidate, max-age=0" --write-out "%{json}" "${url}")"
 	json_raw="${raw#*\{}"
 	html_raw="${raw%%\{*}"
 
@@ -830,7 +836,7 @@ f_net() {
 	fi
 	printf "%s" "${result}"
 
-	f_log "debug" "f_net       ::: timeout: $((trm_maxwait / 6)), cp (json/html/js): ${json_cp:-"-"}/${html_cp:-"-"}/${js_cp:-"-"}, result: ${result}, error (rc/msg): ${json_ec}/${err_msg:-"-"}, url: ${trm_captiveurl}"
+	f_log "debug" "f_net       ::: timeout: $((trm_maxwait / 6)), cp (json/html/js): ${json_cp:-"-"}/${html_cp:-"-"}/${js_cp:-"-"}, result: ${result}, error (rc/msg): ${json_ec}/${err_msg:-"-"}, url: ${url}"
 }
 
 # remove travelmate-added captive portal domains from the dnsmasq rebind whitelist
