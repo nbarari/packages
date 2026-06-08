@@ -32,3 +32,12 @@ jobs:
     name: Feeds Package Test Build
     needs: formalities
     uses: openwrt/actions-shared-workflows/.github/workflows/multi-arch-test-build.yml@main
+    # This fork maintains travelmate, a procd service that calls ubus. The
+    # shared "generic tests" install the package into a per-arch qemu rootfs
+    # and run a runtime smoke test that has no ubusd to connect to, so it fails
+    # ("Failed to connect to ubus") on every runtime_test arch regardless of the
+    # change under review. Disable it: the build/compile test still runs (that
+    # is the part with real signal), and the device-shell lint is the merge gate.
+    with:
+      enable_generic_tests: false
+      force_generic_tests: false
