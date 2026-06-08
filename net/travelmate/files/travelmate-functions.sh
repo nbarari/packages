@@ -88,7 +88,7 @@ f_cmd() {
 		if [ -n "${cmd}" ]; then
 			printf "%s" "${cmd}"
 		else
-			f_log "emerg" "command '${pri_cmd:-"-"}'/'${sec_cmd:-"-"}' not found"
+			f_log_fatal "emerg" "command '${pri_cmd:-"-"}'/'${sec_cmd:-"-"}' not found"
 		fi
 	else
 		printf "%s" "${cmd}"
@@ -1232,13 +1232,19 @@ f_log() {
 		else
 			printf "%s %s %s\n" "${class}" "trm-${trm_bver}[${$}]" "${log_msg::512}" >&2
 		fi
-		if [ "${class}" = "err" ] || [ "${class}" = "emerg" ]; then
-			trm_ifstatus="error"
-			f_genstatus
-			: >"${trm_pidfile}"
-			exit 1
-		fi
 	fi
+}
+
+# write to syslog, then mark the error status and terminate the process
+#
+f_log_fatal() {
+	local class="${1}" log_msg="${2}"
+
+	f_log "${class}" "${log_msg}"
+	trm_ifstatus="error"
+	f_genstatus
+	: >"${trm_pidfile}"
+	exit 1
 }
 
 # wifi scan function
@@ -1547,7 +1553,7 @@ if [ -r "/lib/functions.sh" ] && [ -r "/lib/functions/network.sh" ] && [ -r "/us
 	. "/lib/functions/network.sh"
 	. "/usr/share/libubox/jshn.sh"
 else
-	f_log "err" "system libraries not found"
+	f_log_fatal "err" "system libraries not found"
 fi
 
 # reference required system utilities
@@ -1569,7 +1575,7 @@ trm_mailcmd="$(f_cmd msmtp optional)"
 
 f_system
 if [ "${trm_action}" != "stop" ]; then
-	[ ! -d "/etc/travelmate" ] && f_log "err" "no travelmate config directory"
-	[ ! -r "/etc/config/travelmate" ] && f_log "err" "no travelmate config"
-	[ "$(uci_get travelmate global trm_enabled)" = "0" ] && f_log "err" "travelmate is disabled"
+	[ ! -d "/etc/travelmate" ] && f_log_fatal "err" "no travelmate config directory"
+	[ ! -r "/etc/config/travelmate" ] && f_log_fatal "err" "no travelmate config"
+	[ "$(uci_get travelmate global trm_enabled)" = "0" ] && f_log_fatal "err" "travelmate is disabled"
 fi
