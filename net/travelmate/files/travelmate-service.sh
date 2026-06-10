@@ -20,6 +20,12 @@ if [ -z "${trm_bver}" ]; then
 	f_conf
 fi
 
+# install the SIGTERM handler so procd 'stop' unwinds an in-flight f_main
+# cleanly at a command boundary instead of being SIGKILLed after the grace
+# period (finding 2.5)
+#
+trap "f_term" TERM
+
 # control travelmate actions
 #
 while :; do
