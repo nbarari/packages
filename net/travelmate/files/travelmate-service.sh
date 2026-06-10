@@ -15,6 +15,12 @@ trm_action="${1}"
 [ -z "${trm_bver}" ] && . "${trm_funlib}"
 f_conf
 
+# install the SIGTERM handler so procd 'stop' unwinds an in-flight f_main
+# cleanly at a command boundary instead of being SIGKILLed after the grace
+# period (finding 2.5)
+#
+trap "f_term" TERM
+
 # control travelmate actions
 #
 while :; do

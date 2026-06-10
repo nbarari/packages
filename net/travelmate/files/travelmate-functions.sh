@@ -197,6 +197,20 @@ f_rmpid() {
 	f_log "debug" "f_rmpid     ::: ppid: ${ppid:-"-"}, pid: ${pid:-"-"}, timeout: ${trm_timeout}"
 }
 
+# clean shutdown handler for procd 'stop' (SIGTERM)
+#
+# Unwind cooperatively at the next command boundary instead of waiting for
+# procd's grace-period SIGKILL: clear the runtime + pid files so status
+# reflects the stop and a restart does not inherit a stale pid. Mirrors the
+# service loop's explicit 'stop' action (finding 2.5).
+#
+f_term() {
+	f_log "info" "travelmate instance terminated ::: signal: TERM, pid: ${$}"
+	: >"${trm_rtfile}"
+	: >"${trm_pidfile}"
+	exit 0
+}
+
 # trim helper function
 #
 f_trim() {
