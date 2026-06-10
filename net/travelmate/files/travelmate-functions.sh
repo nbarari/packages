@@ -39,7 +39,6 @@ trm_stdvpnservice=""
 trm_stdvpniface=""
 trm_subnet=""
 trm_subnet_last=""
-trm_lannet=""
 trm_rundir="/var/run/travelmate"
 trm_ntplock="${trm_rundir}/travelmate.ntp.lock"
 trm_vpnfile="${trm_rundir}/travelmate.vpn"
@@ -634,7 +633,7 @@ f_setif() {
 # subnet helper function
 #
 f_subnet() {
-	local lan wan wan_net conn_state="${trm_connection%%/*}"
+	local lan wan wan_net lan_net conn_state="${trm_connection%%/*}"
 
 	# skip when connection state hasn't changed and subnet is already set
 	#
@@ -648,25 +647,24 @@ f_subnet() {
 	network_get_subnet wan "${trm_iface:-"trm_wwan"}"
 	[ -n "${wan}" ] && wan_net="$("${trm_ipcalccmd}" "${wan}" | "${trm_awkcmd}" 'BEGIN{FS="="}/NETWORK/{printf "%s",$2}')"
 
-	# lazy-cache lan subnet (assumed stable for the lifetime of the daemon)
+	# resolve lan subnet on every recompute (re-read so a runtime LAN change
+	# is not masked by a daemon-lifetime cache, finding 2.4)
 	#
-	if [ -z "${trm_lannet}" ]; then
-		network_get_subnet lan "${trm_laniface:-"lan"}"
-		[ -n "${lan}" ] && trm_lannet="$("${trm_ipcalccmd}" "${lan}" | "${trm_awkcmd}" 'BEGIN{FS="="}/NETWORK/{printf "%s",$2}')"
-	fi
+	network_get_subnet lan "${trm_laniface:-"lan"}"
+	[ -n "${lan}" ] && lan_net="$("${trm_ipcalccmd}" "${lan}" | "${trm_awkcmd}" 'BEGIN{FS="="}/NETWORK/{printf "%s",$2}')"
 
 	# warn on lan/wan subnet collision
 	#
-	if [ -n "${trm_lannet}" ] && [ -n "${wan_net}" ] && [ "${trm_lannet}" = "${wan_net}" ]; then
+	if [ -n "${lan_net}" ] && [ -n "${wan_net}" ] && [ "${lan_net}" = "${wan_net}" ]; then
 		f_log "info" "uplink network '${wan_net}' conflicts with router LAN network, please adjust your network settings"
 	fi
 
 	# compose result and remember last state for cache
 	#
-	trm_subnet="${wan_net:-"-"} (lan: ${trm_lannet:-"-"})"
+	trm_subnet="${wan_net:-"-"} (lan: ${lan_net:-"-"})"
 	trm_subnet_last="${conn_state}"
 
-	f_log "debug" "f_subnet    ::: lan: ${trm_lannet:-"-"}, wan: ${wan_net:-"-"}"
+	f_log "debug" "f_subnet    ::: lan: ${lan_net:-"-"}, wan: ${wan_net:-"-"}"
 }
 
 # add open uplinks
