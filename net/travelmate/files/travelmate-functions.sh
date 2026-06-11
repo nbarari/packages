@@ -1117,7 +1117,7 @@ f_getstatus() {
 # generate status information
 #
 f_genstatus() {
-	local parse s_captive s_proactive s_netcheck s_autoadd s_randomize s_eviltwin s_ntp s_vpn s_mail vpn vpn_iface
+	local parse s_captive s_proactive s_netcheck s_autoadd s_randomize s_eviltwin s_ntp s_vpn s_mail vpn vpn_iface rt_json
 	local section last_date sta_iface sta_radio sta_essid sta_bssid sta_mac dev_status status="${trm_ifstatus}" ntp_done="0" vpn_done="0" mail_done="0"
 
 	# get current connection information
@@ -1188,7 +1188,19 @@ f_genstatus() {
 
 	# generate runtime status file
 	#
+	# rebuild the runtime json in a freshly-initialized buffer so the dump
+	# never inherits stale or duplicated keys from a prior cycle's global
+	# jshn state (finding 2.6); the resulting buffer is still left in the
+	# default namespace because f_check/f_main read 'station_id' back from it.
+	# write the file only when the serialized content actually changed, so an
+	# unchanged poll cycle does not rewrite runtime.json every event (finding
+	# 4.4); 'last_run' is read back above, so a steady state serializes
+	# byte-identically and the write is skipped. the write goes via a tempfile
+	# + rename so a concurrent LuCI poll never reads a half-written file.
+	#
 	f_subnet
+	json_init
+	json_add_object "data"
 	json_add_string "travelmate_status" "${status}"
 	json_add_string "frontend_ver" "${trm_fver}"
 	json_add_string "backend_ver" "${trm_bver}"
@@ -1200,7 +1212,10 @@ f_genstatus() {
 	json_add_string "ext_hooks" "ntp: ${s_ntp}, vpn: ${s_vpn}, mail: ${s_mail}"
 	json_add_string "last_run" "${last_date}"
 	json_add_string "system" "${trm_sysver}"
-	json_dump >"${trm_rtfile}"
+	rt_json="$(json_dump)"
+	if [ "${rt_json}" != "$(cat "${trm_rtfile}" 2>/dev/null)" ]; then
+		printf "%s" "${rt_json}" >"${trm_rtfile}.tmp" && mv "${trm_rtfile}.tmp" "${trm_rtfile}"
+	fi
 
 	# send mail notification if enabled and conditions are met
 	#
