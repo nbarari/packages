@@ -1283,7 +1283,7 @@ f_log_fatal() {
 # wifi scan function
 #
 f_scan() {
-	local signal channel wpa_versions cipher auth result key keylist ssid bssid quality wpa_arr cipher_arr auth_arr radio="${1}" mode="${2}"
+	local signal channel wpa_versions cipher auth enc_info result key keylist ssid bssid quality wpa_arr cipher_arr auth_arr radio="${1}" mode="${2}"
 
 	# return early on empty or failed scan result
 	#
@@ -1335,8 +1335,8 @@ f_scan() {
 		json_get_values cipher_arr ciphers 2>/dev/null
 		json_get_values auth_arr authentication 2>/dev/null
 		json_select .. 2>/dev/null
-		wpa_versions="$(printf "%s" "${wpa_arr:-"-"}" | "${trm_awkcmd}" '
-			{
+		enc_info="$(printf "%s\n%s\n%s\n" "${wpa_arr:-"-"}" "${cipher_arr:-"-"}" "${auth_arr:-"-"}" | "${trm_awkcmd}" '
+			NR == 1 {
 				gsub(/[\[\],]/, "");
 				for (i=1; i<=NF; i++) {
 					if ($i == 1) out = out "WPA1+";
@@ -1344,29 +1344,24 @@ f_scan() {
 					if ($i == 3) out = out "WPA3+";
 				}
 				sub(/\+$/, "", out);
-				print (out == "" ? "-" : out);
+				wpa = (out == "" ? "-" : out);
+				next;
 			}
-		')"
-		cipher="$(printf "%s" "${cipher_arr:-"-"}" | "${trm_awkcmd}" '
 			{
 				gsub(/[\[\]"]/, "");
 				gsub(/,/, " ");
 				gsub(/[ \t]+/, " ");
 				$0 = toupper($0);
 				gsub(/ /, "+");
-				print ($0=="" ? "-" : $0)
+				val = ($0 == "" ? "-" : $0);
+				if (NR == 2) cipher = val;
+				else auth = val;
 			}
+			END { print wpa, cipher, auth }
 		')"
-		auth="$(printf "%s" "${auth_arr:-"-"}" | "${trm_awkcmd}" '
-			{
-				gsub(/[\[\]"]/, "");
-				gsub(/,/, " ");
-				gsub(/[ \t]+/, " ");
-				$0 = toupper($0);
-				gsub(/ /, "+");
-				print ($0=="" ? "-" : $0)
-			}
-		')"
+		read -r wpa_versions cipher auth <<-EOV
+			${enc_info}
+		EOV
 
 		# print results in desired format (full or default), filling missing values with placeholders
 		#
