@@ -51,7 +51,7 @@ trm_tmpfile="${trm_rundir}/travelmate.tmp"
 trm_rtfile="${trm_rundir}/travelmate.runtime.json"
 trm_rebindfile="${trm_rundir}/travelmate.rebind"
 trm_captiveurl="http://detectportal.firefox.com"
-trm_useragent="Mozilla/5.0 (X11; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0"
+trm_useragent="Mozilla/5.0 (compatible)"
 
 # ensure runtime directory exists
 #
