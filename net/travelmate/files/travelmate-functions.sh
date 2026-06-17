@@ -105,6 +105,12 @@ f_conf() {
 		option_cb() {
 			local option="${1}" value="${2//\"/\\\"}"
 
+			# SECURITY: 'option' is a UCI key from on-disk config that is
+			# interpolated straight into the eval below. This guard drops any
+			# name containing a character outside [a-zA-Z0-9_], so shell
+			# metacharacters can never reach eval (no command- or variable-name
+			# injection). The value is separately escaped above. Do not remove
+			# or widen this class, and do not move eval out from behind it.
 			case "${option}" in
 			*[!a-zA-Z0-9_]*) ;;
 
@@ -116,6 +122,8 @@ f_conf() {
 		list_cb() {
 			local option="${1}" value="${2//\"/\\\"}"
 
+			# SECURITY: same eval-injection guard as option_cb above — 'option'
+			# reaches eval, so reject any name outside [a-zA-Z0-9_]. Keep it.
 			case "${option}" in
 			*[!a-zA-Z0-9_]*) ;;
 
@@ -880,6 +888,23 @@ f_rmrebind() {
 }
 
 # check interface status
+#
+# Args (positional):
+#   $1 mode    initial | dev | rev | sta — selects the behavior below
+#   $2 status  target trm_ifstatus for this call ("true" | "false")
+#   $3 radio   ) sta uplink identity, read in 'sta' mode only; for
+#   $4 essid   ) 'initial' and 'dev' it is instead parsed from the
+#   $5 bssid   ) runtime json station_id, and is unused for 'rev'
+#
+# Modes:
+#   initial  f_main startup: resolve the active sta interface, measure
+#            signal, run net + captive checks, establish trm_connection.
+#   dev      wifi device up/down event: persist an ifstatus change via
+#            f_genstatus and return; may trigger f_wifi on a drop.
+#   rev      revert: drop trm_connection, remove added rebind domains,
+#            reset trm_ifstatus, and return.
+#   sta      station ifup event: bounce trm_iface down/up over ubus,
+#            then run the same signal/net/captive probe as 'initial'.
 #
 f_check() {
 	local rc raw ifname dev_status result login_script login_script_args cp_domain station_id ifquality
