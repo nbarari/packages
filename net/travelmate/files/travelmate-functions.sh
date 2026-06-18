@@ -1263,6 +1263,14 @@ f_genstatus() {
 	json_add_string "frontend_ver" "${trm_fver}"
 	json_add_string "backend_ver" "${trm_bver}"
 	json_add_string "station_id" "${sta_radio:-"-"}/${sta_essid:-"-"}/${sta_bssid:-"-"}"
+	# also expose the station as structured fields (finding L4); the slash-joined
+	# station_id above is kept for the f_check/f_main parse-back and for older
+	# LuCI frontends that predate the object, so this is purely additive.
+	json_add_object "station"
+	json_add_string "radio" "${sta_radio:-"-"}"
+	json_add_string "essid" "${sta_essid:-"-"}"
+	json_add_string "bssid" "${sta_bssid:-"-"}"
+	json_close_object
 	json_add_string "station_mac" "${sta_mac:-"-"}"
 	json_add_string "station_interfaces" "${sta_iface:-"-"}, ${vpn_iface:-"-"}"
 	json_add_string "station_subnet" "${trm_subnet:-"-"}"
