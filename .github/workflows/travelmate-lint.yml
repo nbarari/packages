@@ -1,0 +1,69 @@
+---
+# Device-shell lint for the travelmate package -- a fast per-PR gate that runs
+# the exact checks in .pre-commit-config.yaml on GitHub-hosted ubuntu-latest.
+#
+# Why GitHub-hosted: the lint needs only busybox + python (no OpenWrt SDK), and
+# `nbarari` is a User account so its ARC self-hosted runners are registered
+# per-repo and none serve this fork. Why not the upstream multi-arch build CI:
+# travelmate is noarch pure shell -- a full SDK build validates the C
+# dependencies, not the shell change, and would miss the device-busybox bugs
+# this gate is built to catch (e.g. `od` absent from busybox). See the rationale
+# in nbarari/travelmate docs/decisions/2026-06-06-ci-risk-matched-gating.md.
+#
+# Path-filtered so it runs only when the travelmate package or the lint tooling
+# changes (this monorepo carries thousands of unrelated packages).
+
+name: travelmate device-shell lint
+
+on:
+  pull_request:
+    paths:
+      - 'net/travelmate/**'
+      - '.github/lint/**'
+      - '.pre-commit-config.yaml'
+      - '.github/workflows/travelmate-lint.yml'
+  push:
+    branches-ignore:
+      - master
+    paths:
+      - 'net/travelmate/**'
+      - '.github/lint/**'
+      - '.pre-commit-config.yaml'
+      - '.github/workflows/travelmate-lint.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: device-shell lint (ash -n + applet presence + shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install busybox (the device shell)
+        run: sudo apt-get update && sudo apt-get install -y busybox
+
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: pre-commit run (travelmate files)
+        run: pre-commit run --all-files --show-diff-on-failure
