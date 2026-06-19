@@ -1,0 +1,9 @@
+[submodule "net/travelmate/tests/unit/bats-core"]
+	path = net/travelmate/tests/unit/bats-core
+	url = https://github.com/bats-core/bats-core.git
+[submodule "net/travelmate/tests/unit/bats-support"]
+	path = net/travelmate/tests/unit/bats-support
+	url = https://github.com/bats-core/bats-support.git
+[submodule "net/travelmate/tests/unit/bats-assert"]
+	path = net/travelmate/tests/unit/bats-assert
+	url = https://github.com/bats-core/bats-assert.git
