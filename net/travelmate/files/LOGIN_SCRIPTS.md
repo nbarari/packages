@@ -16,15 +16,26 @@ A login script is attached to an uplink through two per-uplink UCI options on th
 
 | Option        | Meaning                                                        |
 |---------------|----------------------------------------------------------------|
-| `script`      | Absolute path to an **executable** login script.               |
+| `script`      | Path to the login script. It is canonicalized with `readlink -f` and must resolve to `/etc/travelmate/*.login` — see the allowlist below. |
 | `script_args` | Optional arguments passed to the script (e.g. `user password`).|
 
-When travelmate detects a captive portal on that uplink it runs, in effect:
+When travelmate detects a captive portal on that uplink it validates and runs
+the script, in effect:
 
 ```sh
-"${script}" ${script_args}      # stdout and stderr are discarded
-rc=$?
+script="$(readlink -f "${script}")"        # resolve symlinks / ../ traversal
+case "${script}" in /etc/travelmate/*.login) ;; *) reject ;; esac
+[ -f "${script}" ] && [ -x "${script}" ] || reject
+( set -f; exec "${script}" ${script_args} )   # noglob subshell; stdout/stderr discarded
 ```
+
+This backend allowlist (added upstream in 2.4.6) is a security boundary, not a
+convention: the `luci-app-travelmate` ACL does **not** grant write access to
+`/etc/travelmate`, so requiring scripts to live there — as canonicalized,
+regular, executable `*.login` files — prevents a delegated LuCI ACL from being
+escalated into arbitrary root command execution. The `set -f` subshell stops an
+attacker-influenced `script_args` from glob-expanding into the trusted script;
+field splitting (multiple args) is preserved.
 
 Then:
 
@@ -36,8 +47,10 @@ Then:
   cleared the uplink goes live. **Any non-zero `rc`** is treated as "login did
   not succeed" — travelmate logs it and does not re-check.
 
-Scripts are conventionally installed in `/etc/travelmate` with a `.login`
-extension and must be executable (`chmod +x`).
+Scripts **must** be installed in `/etc/travelmate` with a `.login` extension
+and be executable (`chmod +x`); a `script` path that canonicalizes anywhere
+else, or that is not a regular executable file, is rejected and logged as
+`captive portal login script rejected`.
 
 ## Environment available to the script
 
