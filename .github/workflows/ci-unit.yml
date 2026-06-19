@@ -1,0 +1,53 @@
+---
+# Tier-1 unit tests for the travelmate package (bats + shell-function mocks).
+#
+# Runs the fast, hermetic unit suite under net/travelmate/tests/unit on every PR
+# that touches the package. No OpenWrt SDK or device is needed: shell-function
+# mocks stand in for the device userland (ubus/uci/jshn), and the suite invokes
+# the vendored bats submodule directly (no install step). This complements --
+# does not replace -- the device-shell lint (travelmate-lint.yml) and the
+# on-demand SDK build. See, in the nbarari/travelmate docs repo,
+# docs/decisions/2026-06-19-track5-tier1-bats-harness.md for scope and rationale
+# (notably: jshn-heavy functions are deliberately deferred to Tier-2 QEMU).
+#
+# Path-filtered so it stays quiet on the thousands of unrelated monorepo packages.
+
+name: travelmate unit tests
+
+on:
+  pull_request:
+    paths:
+      - 'net/travelmate/**'
+      - '.github/workflows/ci-unit.yml'
+  push:
+    branches-ignore:
+      - master
+    paths:
+      - 'net/travelmate/**'
+      - '.github/workflows/ci-unit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  unit:
+    name: bats unit suite (Tier-1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Run bats unit suite
+        run: >-
+          ./net/travelmate/tests/unit/bats-core/bin/bats
+          --print-output-on-failure
+          net/travelmate/tests/unit
