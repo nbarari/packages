@@ -103,6 +103,11 @@ QEMU_PID_FILE="${WORK_DIR}/qemu.pid"
 if [ -f "${QEMU_PID_FILE}" ]; then
 	old_pid="$(cat "${QEMU_PID_FILE}")"
 	kill "${old_pid}" 2>/dev/null || true
+	# wait up to 10s for the old process to release the image lock
+	_w=0
+	while kill -0 "${old_pid}" 2>/dev/null && [ "${_w}" -lt 10 ]; do
+		sleep 1; _w=$((_w + 1))
+	done
 	rm -f "${QEMU_PID_FILE}"
 fi
 
