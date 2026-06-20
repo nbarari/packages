@@ -1,32 +1,44 @@
 #!/bin/sh
 # tests/integration/runner.sh — Tier-2 travelmate integration test runner.
 #
-# Boots OpenWrt x86_64 in QEMU via boot-vm.sh, installs travelmate, configures
-# a two-radio mac80211_hwsim environment, runs a scenario, and asserts the
-# expected runtime.json output.
+# Boots OpenWrt x86_64 in QEMU via boot-vm.sh (tap networking), installs
+# travelmate from source, configures a two-radio mac80211_hwsim environment,
+# runs the scenario, and asserts the expected runtime.json output.
 #
-# Usage: runner.sh <apk-path> [scenario-file]
-#   apk-path:      built travelmate .apk (required unless TRAVELMATE_VARIANT=upstream)
+# Usage: runner.sh [scenario-file]
 #   scenario-file: path to scenario YAML (default: scenarios/happy.yml)
 #
 # Environment:
-#   TRAVELMATE_VARIANT  'fork' (default) or 'upstream'
-#                       upstream = install from apk repo (calibration run per roadmap)
-#   OPENWRT_IMAGE       local path or URL for OpenWrt x86_64 img.gz (passed to boot-vm.sh)
-#   SSH_PORT            host port forwarded to VM SSH (default: 2222)
+#   TRAVELMATE_VARIANT  'fork' (default) — installs from source files relative
+#                       to this script. 'upstream' requires guest internet
+#                       access (deferred to Tier-2 increment-2).
+#   OPENWRT_IMAGE       local path or URL for OpenWrt x86_64 img.gz
+#   GUEST_IP            OpenWrt LAN IP (default: 192.168.1.1)
+#   TAP_IFACE           tap interface name (default: trmtap0)
+#   HOST_TAP_IP         host tap address (default: 192.168.1.100/24)
 #   WORK_DIR            temp dir for VM state (default: /tmp/trm-tier2)
 #   KEEP_VM             '1' to leave VM running after test (default: 0)
+#   CONNECT_TIMEOUT     seconds to wait for STA to connect (default: 120)
+#
+# Design notes:
+#   - Travelmate is installed by copying source files directly (no package
+#     manager), so the fork variant works without building an .apk.
+#   - Wireless config uses 'option phy phyN' (not 'option path ...') because
+#     iwinfo's phyname lookup cannot resolve mac80211_hwsim's virtual device
+#     path, which causes mac80211.sh to fail to find the PHY.
+#   - See boot-vm.sh header for additional QEMU + wireless setup notes.
 
 set -e
 
 INTEGRATION_DIR="$(cd "$(dirname "$0")" && pwd)"
-APK_PATH="${1:-}"
-SCENARIO="${2:-${INTEGRATION_DIR}/scenarios/happy.yml}"
+SCENARIO="${1:-${INTEGRATION_DIR}/scenarios/happy.yml}"
 TRAVELMATE_VARIANT="${TRAVELMATE_VARIANT:-fork}"
-SSH_PORT="${SSH_PORT:-2222}"
+GUEST_IP="${GUEST_IP:-192.168.1.1}"
+TAP_IFACE="${TAP_IFACE:-trmtap0}"
+HOST_TAP_IP="${HOST_TAP_IP:-192.168.1.100/24}"
 WORK_DIR="${WORK_DIR:-/tmp/trm-tier2}"
 KEEP_VM="${KEEP_VM:-0}"
-CONNECT_TIMEOUT=120
+CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-120}"
 
 die()  { printf "runner: FAIL: %s\n" "$*" >&2; exit 1; }
 log()  { printf "runner: %s\n" "$*" >&2; }
@@ -34,12 +46,7 @@ pass() { printf "runner: PASS: %s\n" "$*"; }
 
 [ -f "${SCENARIO}" ] || die "scenario file not found: ${SCENARIO}"
 
-if [ "${TRAVELMATE_VARIANT}" = "fork" ]; then
-	[ -n "${APK_PATH}" ] || die "apk-path required (or set TRAVELMATE_VARIANT=upstream)"
-	[ -f "${APK_PATH}" ] || die "apk not found: ${APK_PATH}"
-fi
-
-# --- parse scenario (flat YAML: lines of the form 'key: value') ---
+# --- parse scenario (flat YAML: 'key: value' lines) ---
 
 _val() { grep -m1 "^${1}:" "${SCENARIO}" | sed 's/^[^:]*:[[:space:]]*//' | tr -d '"'; }
 
@@ -56,52 +63,46 @@ AP_CHANNEL="${AP_CHANNEL:-6}"
 AP_ENCRYPTION="${AP_ENCRYPTION:-psk2}"
 ASSERT_STATUS="${ASSERT_STATUS:-connected}"
 
-# --- SSH/SCP helpers ---
+# --- SSH helpers (direct to guest via tap; no port forwarding) ---
 
-SSH_OPTS="-q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	-o ConnectTimeout=10 -p ${SSH_PORT}"
-SCP_OPTS="-q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	-P ${SSH_PORT}"
+SSH_OPTS="-q -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
 
-_ssh() { ssh ${SSH_OPTS} root@127.0.0.1 "$@"; }
-_scp() { scp ${SCP_OPTS} "$@"; }
+_ssh() { ssh ${SSH_OPTS} root@"${GUEST_IP}" "$@"; }
 
 # --- cleanup on exit ---
 
 cleanup() {
-	[ "${KEEP_VM}" = "1" ] && return
-	if [ -f "${WORK_DIR}/qemu.pid" ]; then
-		pid="$(cat "${WORK_DIR}/qemu.pid")"
-		log "stopping VM (pid ${pid})"
-		kill "${pid}" 2>/dev/null || true
-		rm -f "${WORK_DIR}/qemu.pid"
+	if [ "${KEEP_VM}" != "1" ]; then
+		if [ -f "${WORK_DIR}/qemu.pid" ]; then
+			pid="$(cat "${WORK_DIR}/qemu.pid")"
+			log "stopping VM (pid ${pid})"
+			kill "${pid}" 2>/dev/null || true
+			rm -f "${WORK_DIR}/qemu.pid"
+		fi
+		log "removing tap interface ${TAP_IFACE}"
+		sudo ip link set "${TAP_IFACE}" down 2>/dev/null || true
+		sudo ip tuntap del dev "${TAP_IFACE}" mode tap 2>/dev/null || true
 	fi
 }
 trap cleanup EXIT INT TERM
 
 # --- boot ---
 
-boot_args="--port ${SSH_PORT} --work-dir ${WORK_DIR}"
+log "booting OpenWrt VM"
+boot_args="--work-dir ${WORK_DIR} --tap ${TAP_IFACE} --guest-ip ${GUEST_IP} --host-ip ${HOST_TAP_IP}"
 [ -n "${OPENWRT_IMAGE:-}" ] && boot_args="${boot_args} --image ${OPENWRT_IMAGE}"
 "${INTEGRATION_DIR}/boot-vm.sh" ${boot_args} >/dev/null
-log "VM ready"
-
-# --- discover PHY device paths (host-side, expanded before SSH) ---
-
-PHY0_PATH="$(_ssh "readlink -f /sys/class/ieee80211/phy0/device" | sed 's|/sys/devices/||')"
-PHY1_PATH="$(_ssh "readlink -f /sys/class/ieee80211/phy1/device" | sed 's|/sys/devices/||')"
-[ -n "${PHY0_PATH}" ] || die "could not read phy0 sysfs path"
-[ -n "${PHY1_PATH}" ] || die "could not read phy1 sysfs path"
-log "phy0=${PHY0_PATH}  phy1=${PHY1_PATH}"
+log "VM ready at ${GUEST_IP}"
 
 # --- write wireless config ---
-# Variables are expanded here (host shell) then the resulting string is
-# piped to the guest's cat. No double-expansion risk.
+# Use 'option phy phyN' instead of 'option path virtual/...' — see header.
+# Radio 0 = STA (connects to the uplink AP).
+# Radio 1 = AP (simulates the target uplink for this scenario).
 
-wireless_cfg=$(cat <<EOF
+_ssh "cat > /etc/config/wireless" <<WEOF
 config wifi-device 'radio0'
 	option type 'mac80211'
-	option path '${PHY0_PATH}'
+	option phy 'phy0'
 	option channel '${AP_CHANNEL}'
 	option hwmode '11g'
 	option disabled '0'
@@ -117,7 +118,7 @@ config wifi-iface 'sta0'
 
 config wifi-device 'radio1'
 	option type 'mac80211'
-	option path '${PHY1_PATH}'
+	option phy 'phy1'
 	option channel '${AP_CHANNEL}'
 	option hwmode '11g'
 	option disabled '0'
@@ -129,20 +130,15 @@ config wifi-iface 'ap1'
 	option ssid '${AP_SSID}'
 	option encryption '${AP_ENCRYPTION}'
 	option key '${AP_PSK}'
-EOF
-)
-printf "%s\n" "${wireless_cfg}" | _ssh "cat > /etc/config/wireless"
+WEOF
 
-# add the trm_wwan DHCP interface for the STA's network
+# --- write network and travelmate config ---
+
 _ssh "uci -q set network.trm_wwan=interface; \
       uci -q set network.trm_wwan.proto=dhcp; \
       uci commit network"
 
-# --- write travelmate config ---
-# uplink section: device+ssid match the sta0 wifi-iface (f_getcfg key).
-# The key lives in wireless config; travelmate uplink carries enabled=1.
-
-trm_cfg=$(cat <<EOF
+_ssh "cat > /etc/config/travelmate" <<TEOF
 config travelmate 'global'
 	option trm_enabled '1'
 	option trm_iface 'trm_wwan'
@@ -159,27 +155,83 @@ config uplink
 	option device 'radio0'
 	option ssid '${AP_SSID}'
 	option enabled '1'
-EOF
-)
-printf "%s\n" "${trm_cfg}" | _ssh "cat > /etc/config/travelmate"
+TEOF
+
+# --- bring up wireless stack ---
+# wifi up asks netifd to configure the radios. With 'option phy' the AP side
+# (radio1) comes up automatically via wpad/hostapd. The STA side (radio0) is
+# configured via wpa_supplicant on ubus (started in boot-vm.sh).
+
+log "bringing up wireless stack"
+# wifi up triggers 'ubus call network reload' in netifd, which briefly drops
+# the LAN bridge before reconfiguring. Give netifd time to complete the reload
+# and start the wireless driver before polling.
+_ssh "wifi up 2>/dev/null; sleep 10"
+
+# wait for AP to come up — netifd + mac80211.sh can take 60-90s in QEMU
+log "waiting for AP (radio1) to become ready"
+elapsed=0
+while [ "${elapsed}" -lt 90 ]; do
+	ap_up="$(_ssh "ubus call network.wireless status 2>/dev/null" | \
+		grep -A3 '"radio1"' | grep '"up"' | head -1 | grep -c 'true')"
+	[ "${ap_up}" = "1" ] && break
+	sleep 5
+	elapsed=$((elapsed + 5))
+done
+[ "${elapsed}" -lt 90 ] || die "radio1 AP did not come up after 90s"
+log "radio1 AP is up"
+
+# wait for STA to associate
+log "waiting up to ${CONNECT_TIMEOUT}s for STA (radio0) to associate..."
+elapsed=0
+while [ "${elapsed}" -lt "${CONNECT_TIMEOUT}" ]; do
+	sta_link="$(_ssh "iw dev phy0-sta0 link 2>/dev/null" | grep -c 'Connected')"
+	[ "${sta_link}" = "1" ] && break
+	sleep 5
+	elapsed=$((elapsed + 5))
+done
+[ "${elapsed}" -lt "${CONNECT_TIMEOUT}" ] \
+	|| die "STA (phy0-sta0) did not associate after ${CONNECT_TIMEOUT}s"
+log "STA associated after ${elapsed}s"
+
+# wait for trm_wwan to get an IP
+elapsed=0
+while [ "${elapsed}" -lt 30 ]; do
+	trm_up="$(_ssh "ubus call network.interface.trm_wwan status 2>/dev/null" | \
+		grep '"up"' | grep -c 'true')"
+	[ "${trm_up}" = "1" ] && break
+	sleep 3
+	elapsed=$((elapsed + 3))
+done
+[ "${elapsed}" -lt 30 ] || die "trm_wwan interface did not get an IP after 30s"
+log "trm_wwan is up"
 
 # --- install travelmate ---
 
 if [ "${TRAVELMATE_VARIANT}" = "upstream" ]; then
-	log "installing travelmate from upstream apk repo (calibration run)"
-	_ssh "apk update && apk add travelmate" \
-		|| die "upstream travelmate install failed"
-else
-	log "installing fork travelmate from ${APK_PATH}"
-	_scp "${APK_PATH}" "root@127.0.0.1:/tmp/travelmate.apk"
-	_ssh "apk add --allow-untrusted /tmp/travelmate.apk" \
-		|| die "apk install failed"
+	log "upstream calibration requires guest internet access (deferred to increment-2)"
+	die "upstream variant not yet supported — rerun with TRAVELMATE_VARIANT=fork"
 fi
 
-# --- bring up AP and STA, start travelmate ---
+log "installing fork travelmate from source"
 
-log "starting wifi"
-_ssh "wifi up"
+TRM_FILES="${INTEGRATION_DIR}/../../files"
+trm_init="${TRM_FILES}/travelmate.init"
+trm_svc="${TRM_FILES}/travelmate-service.sh"
+trm_lib="${TRM_FILES}/travelmate-functions.sh"
+
+[ -f "${trm_init}" ] || die "travelmate.init not found: ${trm_init}"
+[ -f "${trm_svc}"  ] || die "travelmate-service.sh not found: ${trm_svc}"
+[ -f "${trm_lib}"  ] || die "travelmate-functions.sh not found: ${trm_lib}"
+
+cat "${trm_lib}"  | _ssh "cat > /usr/lib/travelmate-functions.sh"
+cat "${trm_svc}"  | _ssh "mkdir -p /usr/bin && cat > /usr/bin/travelmate-service.sh && chmod +x /usr/bin/travelmate-service.sh"
+cat "${trm_init}" | _ssh "cat > /etc/init.d/travelmate && chmod +x /etc/init.d/travelmate"
+
+_ssh "mkdir -p /etc/travelmate && /etc/init.d/travelmate enable"
+log "travelmate installed and enabled"
+
+# --- start travelmate ---
 
 log "starting travelmate"
 _ssh "/etc/init.d/travelmate start"
@@ -190,6 +242,7 @@ RT_FILE="/var/run/travelmate/travelmate.runtime.json"
 log "waiting up to ${CONNECT_TIMEOUT}s for '${ASSERT_STATUS}' in travelmate_status..."
 
 status_val=""
+rt_json=""
 elapsed=0
 while [ "${elapsed}" -lt "${CONNECT_TIMEOUT}" ]; do
 	rt_json="$(_ssh "cat ${RT_FILE}" 2>/dev/null)" || rt_json=""
