@@ -1,0 +1,59 @@
+# Tier-2 integration tests for the travelmate package (QEMU + mac80211_hwsim).
+#
+# Runs the integration suite under net/travelmate/tests/integration on a
+# self-hosted runner that has KVM, QEMU, and Linux tap networking available.
+# Requires an ARC (Actions Runner Controller) scale-set on the Proxmox build
+# agent (VM 401) or equivalent — see docs/decisions/2026-06-20-track5-tier2-
+# qemu-integration-runner.md (in the nbarari/travelmate docs repo) for the
+# design and the build-master.sh + deliver-and-build flow.
+#
+# Trigger: workflow_dispatch only until the ARC scale-set is configured.
+# Once the runner label 'travelmate-qemu' is live, add pull_request / push
+# triggers with the same path filter as ci-unit.yml.
+#
+# Scenarios run (in order):
+#   1. happy.yml              — baseline WPA2 connect (upstream calibration)
+#   2. captive-meta-refresh.yml — captive portal detection (meta-refresh)
+
+name: travelmate integration tests (Tier-2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Scenario file (relative to tests/integration/scenarios/), or "all"'
+        required: false
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: QEMU integration suite (Tier-2)
+    runs-on: [self-hosted, travelmate-qemu]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - scenarios/happy.yml
+          - scenarios/captive-meta-refresh.yml
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Run integration scenario
+        if: >-
+          github.event.inputs.scenario == 'all' ||
+          endsWith(matrix.scenario, github.event.inputs.scenario)
+        run: |
+          sudo net/travelmate/tests/integration/runner.sh \
+            "net/travelmate/tests/integration/${{ matrix.scenario }}"
+        env:
+          KEEP_VM: "0"
