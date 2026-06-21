@@ -1,0 +1,18 @@
+# Increment-2 captive scenario: STA connects to a WPA2 AP, the runner starts a
+# busybox httpd captive simulator on the guest, and travelmate (trm_captive=1)
+# detects the meta-refresh redirect — status contains "net cp" (captive portal).
+#
+# Runner support: captive_mode triggers the captive-sim setup in runner.sh:
+#   1. Creates a meta-refresh HTML page in /tmp/captive-www/
+#   2. Starts busybox httpd on port 8080 serving that page
+#   3. Adds a /etc/hosts entry so trm-captive.test resolves to 192.168.1.1
+#   4. Sets trm_captiveurl=http://trm-captive.test:8080 and trm_captive=1
+#
+# Assertion: travelmate_status contains "net cp" — captive portal detected.
+name: captive-meta-refresh
+ap_ssid: trm-test-captive
+ap_psk: TrmTestCaptive!
+ap_channel: 6
+ap_encryption: psk2
+captive_mode: meta-refresh
+assert_status_contains: net cp

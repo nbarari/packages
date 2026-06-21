@@ -1,0 +1,23 @@
+# Increment-2 evil-twin scenario (stub): travelmate skips an AP whose BSSID has
+# the LAA (Locally Administered Address) bit set (trm_eviltwin=1).
+#
+# Status: STUB — runner.sh does not yet configure an LAA BSSID on the AP radio.
+# Implementation plan:
+#   1. Before bringing up wireless, set the AP radio's MAC to a LAA address:
+#        _ssh "ip link set phy1 address 02:aa:bb:cc:dd:ee"
+#      (phy1 is the AP PHY; its MAC becomes the BSSID that travelmate scans)
+#   2. Set trm_eviltwin=1 in the travelmate config
+#   3. The uplink entry has NO bssid= so travelmate looks up the BSSID in scan
+#   4. f_main detects the LAA BSSID and skips the uplink
+#   5. Assert: travelmate does NOT reach "connected" status (evil-twin skipped)
+#
+# Assertion: use assert_status_excludes (not yet implemented in runner.sh).
+# The runner needs a negative-assertion mode: wait for CONNECT_TIMEOUT, then
+# verify travelmate_status does NOT contain "connected".
+name: evil-twin
+ap_ssid: trm-test-eviltwin
+ap_psk: TrmTestEvil!
+ap_channel: 6
+ap_encryption: psk2
+evil_twin: true
+assert_status_excludes: connected

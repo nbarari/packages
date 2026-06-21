@@ -1,0 +1,18 @@
+# Increment-2 captive scenario (stub): 302-redirect captive portal detection.
+#
+# Status: STUB — runner.sh does not yet support captive_mode=redirect-302.
+# The 302 response requires a server that can send redirect responses; busybox
+# httpd (used for meta-refresh) serves static files only. Implementation options:
+#   A. Use a busybox httpd CGI script (needs CGI enabled in the OpenWrt image)
+#   B. Use socat: socat TCP-LISTEN:8080,fork,reuseaddr EXEC:"printf 'HTTP/1.0 302...\r\n'"
+#   C. Install python3 via _install_ipk and run captive-sim.py with --mode redirect-302
+# Implement whichever option lands first and remove this stub comment.
+#
+# Assertion: same as meta-refresh — travelmate_status should contain "net cp".
+name: captive-302
+ap_ssid: trm-test-captive-302
+ap_psk: TrmTestCaptive302!
+ap_channel: 6
+ap_encryption: psk2
+captive_mode: redirect-302
+assert_status_contains: net cp

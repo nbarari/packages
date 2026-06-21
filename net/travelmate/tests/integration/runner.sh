@@ -54,6 +54,7 @@ AP_SSID="$(_val ap_ssid)"
 AP_PSK="$(_val ap_psk)"
 AP_CHANNEL="$(_val ap_channel)"
 AP_ENCRYPTION="$(_val ap_encryption)"
+CAPTIVE_MODE="$(_val captive_mode)"
 ASSERT_STATUS="$(_val assert_status_contains)"
 ASSERT_ESSID="$(_val assert_station_essid)"
 
@@ -62,6 +63,10 @@ ASSERT_ESSID="$(_val assert_station_essid)"
 AP_CHANNEL="${AP_CHANNEL:-6}"
 AP_ENCRYPTION="${AP_ENCRYPTION:-psk2}"
 ASSERT_STATUS="${ASSERT_STATUS:-connected}"
+
+# Captive mode state (set below if captive_mode is configured)
+TRM_CAPTIVE="0"
+TRM_CAPTIVEURL=""
 
 # --- SSH helpers (direct to guest via tap; no port forwarding) ---
 
@@ -142,7 +147,8 @@ _ssh "cat > /etc/config/travelmate" <<TEOF
 config travelmate 'global'
 	option trm_enabled '1'
 	option trm_iface 'trm_wwan'
-	option trm_captive '0'
+	option trm_captive '${TRM_CAPTIVE}'
+	option trm_captiveurl '${TRM_CAPTIVEURL}'
 	option trm_proactive '0'
 	option trm_netcheck '0'
 	option trm_autoadd '0'
@@ -207,6 +213,34 @@ while [ "${elapsed}" -lt 30 ]; do
 done
 [ "${elapsed}" -lt 30 ] || die "trm_wwan interface did not get an IP after 30s"
 log "trm_wwan is up"
+
+# --- captive portal simulator setup ---
+# Must run before travelmate starts so the sim is listening when f_check probes.
+
+if [ -n "${CAPTIVE_MODE}" ]; then
+	case "${CAPTIVE_MODE}" in
+	meta-refresh)
+		log "starting busybox httpd captive sim (meta-refresh) on guest:8080"
+		_ssh "mkdir -p /tmp/captive-www && \
+			printf '<html><head><meta http-equiv=\"refresh\" content=\"0;url=http://captive.example.com/login\"></head></html>\n' \
+				>/tmp/captive-www/index.html && \
+			busybox httpd -p 8080 -h /tmp/captive-www"
+		# Resolve the probe hostname to the router's LAN IP (192.168.1.1) so
+		# curl --interface trm_wwan reaches the httpd via the wireless STA path.
+		_ssh "printf '192.168.1.1 trm-captive.test\n' >>/etc/hosts"
+		TRM_CAPTIVE="1"
+		TRM_CAPTIVEURL="http://trm-captive.test:8080"
+		# brief wait for httpd to bind
+		sleep 2
+		_ssh "curl -sf http://127.0.0.1:8080/ | grep -q 'meta http-equiv'" \
+			|| die "captive-sim httpd did not start (meta-refresh)"
+		log "captive-sim ready at ${TRM_CAPTIVEURL}"
+		;;
+	*)
+		die "unsupported captive_mode '${CAPTIVE_MODE}' — implement in runner.sh first"
+		;;
+	esac
+fi
 
 # --- install travelmate ---
 
