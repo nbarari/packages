@@ -49,6 +49,7 @@ trm_pidfile="${trm_rundir}/travelmate.pid"
 trm_scanfile="${trm_rundir}/travelmate.scan"
 trm_tmpfile="${trm_rundir}/travelmate.tmp"
 trm_rtfile="${trm_rundir}/travelmate.runtime.json"
+trm_metricsfile="${trm_rundir}/travelmate.metrics"
 trm_rebindfile="${trm_rundir}/travelmate.rebind"
 trm_captiveurl="http://detectportal.firefox.com"
 trm_useragent="Mozilla/5.0 (compatible)"
@@ -169,6 +170,7 @@ f_conf() {
 	json_load_file "${trm_rtfile}" >/dev/null 2>&1
 	if ! json_select data >/dev/null 2>&1; then
 		: >"${trm_rtfile}"
+		: >"${trm_metricsfile}"
 		json_init
 		json_add_object "data"
 	fi
@@ -215,6 +217,7 @@ f_rmpid() {
 f_term() {
 	f_log "info" "travelmate instance terminated ::: signal: TERM, pid: ${$}"
 	: >"${trm_rtfile}"
+	: >"${trm_metricsfile}"
 	: >"${trm_pidfile}"
 	exit 0
 }
@@ -1282,6 +1285,7 @@ f_genstatus() {
 	if [ "${rt_json}" != "$(cat "${trm_rtfile}" 2>/dev/null)" ]; then
 		printf "%s" "${rt_json}" >"${trm_rtfile}.tmp" && mv "${trm_rtfile}.tmp" "${trm_rtfile}"
 	fi
+	f_metrics
 
 	# send mail notification if enabled and conditions are met
 	#
@@ -1295,6 +1299,73 @@ f_genstatus() {
 	fi
 
 	f_log "debug" "f_genstatus ::: section: ${section:-"-"}, status: ${status:-"-"}, sta_iface: ${sta_iface:-"-"}, sta_radio: ${sta_radio:-"-"}, sta_essid: ${sta_essid:-"-"}, sta_bssid: ${sta_bssid:-"-"}, ntp: ${ntp_done}, vpn: ${vpn:-"0"}/${vpn_done}, mail: ${trm_mail}/${mail_done}"
+}
+
+# write metrics in Prometheus text format
+#
+# Called from f_genstatus; inherits its locals via ash dynamic scoping:
+# status, sta_radio, sta_essid, sta_bssid, ntp_done, vpn_done, mail_done.
+#
+f_metrics() {
+	local connected=0 quality=0 captive=0 mt_data mt_radio mt_essid mt_bssid
+
+	case "${status}" in
+		"connected, net ok/"*)
+			connected=1
+			quality="${status##*/}"
+			;;
+		"connected, net cp/"*)
+			connected=1
+			captive=1
+			quality="${status##*/}"
+			;;
+		"connected, net nok/"*)
+			connected=1
+			quality="${status##*/}"
+			;;
+	esac
+
+	mt_radio="$(printf "%s" "${sta_radio:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+	mt_essid="$(printf "%s" "${sta_essid:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+	mt_bssid="$(printf "%s" "${sta_bssid:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+
+	mt_data="$(cat <<-EOF
+		# HELP travelmate_connected 1 if connected to an uplink, 0 otherwise
+		# TYPE travelmate_connected gauge
+		travelmate_connected{radio="${mt_radio}",essid="${mt_essid}",bssid="${mt_bssid}"} ${connected}
+		# HELP travelmate_net_quality Signal quality percent from connectivity check (0-100)
+		# TYPE travelmate_net_quality gauge
+		travelmate_net_quality ${quality}
+		# HELP travelmate_captive_portal 1 if a captive portal is currently detected, 0 otherwise
+		# TYPE travelmate_captive_portal gauge
+		travelmate_captive_portal ${captive}
+		# HELP travelmate_feature_captive 1 if captive portal probing is enabled
+		# TYPE travelmate_feature_captive gauge
+		travelmate_feature_captive ${trm_captive:-0}
+		# HELP travelmate_feature_proactive 1 if proactive roaming is enabled
+		# TYPE travelmate_feature_proactive gauge
+		travelmate_feature_proactive ${trm_proactive:-0}
+		# HELP travelmate_feature_netcheck 1 if connectivity checking is enabled
+		# TYPE travelmate_feature_netcheck gauge
+		travelmate_feature_netcheck ${trm_netcheck:-0}
+		# HELP travelmate_feature_autoadd 1 if automatic AP addition is enabled
+		# TYPE travelmate_feature_autoadd gauge
+		travelmate_feature_autoadd ${trm_autoadd:-0}
+		# HELP travelmate_hook_ntp 1 if NTP synchronization has completed
+		# TYPE travelmate_hook_ntp gauge
+		travelmate_hook_ntp ${ntp_done}
+		# HELP travelmate_hook_vpn 1 if VPN is active
+		# TYPE travelmate_hook_vpn gauge
+		travelmate_hook_vpn ${vpn_done}
+		# HELP travelmate_hook_mail 1 if connect-notification mail has been sent this session
+		# TYPE travelmate_hook_mail gauge
+		travelmate_hook_mail ${mail_done}
+	EOF
+	)"
+	if [ "${mt_data}" != "$(cat "${trm_metricsfile}" 2>/dev/null)" ]; then
+		printf "%s\n" "${mt_data}" >"${trm_metricsfile}.tmp" && mv "${trm_metricsfile}.tmp" "${trm_metricsfile}"
+	fi
+	f_log "debug" "f_metrics   ::: connected: ${connected}, quality: ${quality}, captive: ${captive}"
 }
 
 # send status mail
