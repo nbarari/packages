@@ -1346,6 +1346,38 @@ f_log_fatal() {
 	exit 1
 }
 
+# lifecycle hook dispatcher: find and run scripts in /etc/travelmate/hooks.d/${stage}-${event}.d/
+#
+f_hook() {
+	local stage="${1}" event="${2}" radio="${3}" essid="${4}" bssid="${5}"
+	local hook_dir="/etc/travelmate/hooks.d/${stage}-${event}.d"
+	local hook hook_rc run_flags
+
+	[ -d "${hook_dir}" ] || return 0
+
+	run_flags="captive:${trm_captive:-0},proactive:${trm_proactive:-0},netcheck:${trm_netcheck:-0},autoadd:${trm_autoadd:-0}"
+	for hook in $(find "${hook_dir}" -maxdepth 1 -type f 2>/dev/null | sort); do
+		[ -x "${hook}" ] || continue
+		(
+			export TRM_STAGE="${stage}"
+			export TRM_EVENT="${event}"
+			export TRM_STATION_ID="${radio:-"-"}/${essid:-"-"}/${bssid:-"-"}"
+			export TRM_RADIO="${radio:-"-"}"
+			export TRM_ESSID="${essid:-""}"
+			export TRM_BSSID="${bssid:-"-"}"
+			export TRM_RUN_FLAGS="${run_flags}"
+			"${trm_timeoutcmd}" 10 "${hook}"
+		) >/dev/null 2>&1
+		hook_rc="${?}"
+		if [ "${hook_rc}" = "124" ]; then
+			f_log "info" "hook '${hook}' (${stage}-${event}) timed out after 10 seconds"
+		elif [ "${hook_rc}" != "0" ]; then
+			f_log "info" "hook '${hook}' (${stage}-${event}) exited with rc '${hook_rc}'"
+		fi
+	done
+	f_log "debug" "f_hook      ::: stage: ${stage}, event: ${event}, radio: ${radio:-"-"}, essid: ${essid:-"-"}, bssid: ${bssid:-"-"}"
+}
+
 # wifi scan function
 #
 f_scan() {
@@ -1522,7 +1554,9 @@ f_main() {
 					f_log "debug" "f_main-5    ::: sta_radio: ${sta_radio}, sta_essid: \"${sta_essid}\", sta_bssid: ${sta_bssid:-"-"}"
 				fi
 				if [ -z "${scan_list}" ]; then
+					f_hook "pre" "scan" "${radio}"
 					scan_list="$(f_scan "${radio}" | "${trm_sortcmd}" -rn)"
+					f_hook "post" "scan" "${radio}"
 				fi
 				if [ -z "${scan_list}" ]; then
 					f_log "info" "no scan results on '${radio}'"
@@ -1580,8 +1614,10 @@ f_main() {
 									f_vpn "disable"
 									uci_set "wireless" "${trm_activesta}" "disabled" "1"
 									[ -n "$(uci -q changes "wireless")" ] && uci_commit "wireless"
+									f_hook "pre" "disconnect" "${config_radio}" "${config_essid}" "${config_bssid}"
 									f_check "rev" "false"
 									f_log "info" "uplink connection terminated '${config_radio}/${config_essid}/${config_bssid:-"-"}'"
+									f_hook "post" "disconnect" "${config_radio}" "${config_essid}" "${config_bssid}"
 									unset config_radio config_essid config_bssid
 								fi
 
@@ -1593,6 +1629,7 @@ f_main() {
 								while [ "${trm_maxretry}" = "0" ] || [ "${retrycnt}" -le "${trm_maxretry}" ]; do
 									sta_mac="$(f_mac "set" "${section}")"
 									uci_set "wireless" "${section}" "disabled" "0"
+									f_hook "pre" "connect" "${sta_radio}" "${sta_essid}" "${sta_bssid}"
 									f_check "sta" "false" "${sta_radio}" "${sta_essid}" "${sta_bssid}"
 									if [ "${trm_ifstatus}" = "true" ]; then
 										rm -f "${trm_mailfile}"
@@ -1611,6 +1648,7 @@ f_main() {
 										[ "${trm_randomize}" = "1" ] && [ -z "$(f_getval "macaddr")" ] && uci_remove "wireless" "${section}" "macaddr" 2>/dev/null
 										[ -n "$(uci -q changes "wireless")" ] && uci_commit "wireless"
 										f_log "info" "connected to uplink '${sta_radio}/${sta_essid}/${sta_bssid:-"-"}' with mac '${sta_mac:-"-"}' (${retrycnt}/${retry_display})"
+										f_hook "post" "connect" "${sta_radio}" "${sta_essid}" "${sta_bssid}"
 										f_vpn "enable"
 										return 0
 									else
@@ -1648,6 +1686,7 @@ f_main() {
 trm_catcmd="$(f_cmd cat)"
 trm_awkcmd="$(f_cmd gawk awk)"
 trm_sortcmd="$(f_cmd sort)"
+trm_timeoutcmd="$(f_cmd timeout)"
 trm_pgrepcmd="$(f_cmd pgrep)"
 trm_killcmd="$(f_cmd kill)"
 trm_jsoncmd="$(f_cmd jsonfilter)"
