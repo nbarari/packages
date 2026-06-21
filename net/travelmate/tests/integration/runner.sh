@@ -158,15 +158,17 @@ config uplink
 TEOF
 
 # --- bring up wireless stack ---
-# wifi up asks netifd to configure the radios. With 'option phy' the AP side
-# (radio1) comes up automatically via wpad/hostapd. The STA side (radio0) is
-# configured via wpa_supplicant on ubus (started in boot-vm.sh).
+# Restart netifd so it reads the wireless config we just wrote. A simple
+# 'wifi up' / 'network reload' (SIGHUP) is insufficient: netifd initialises
+# its wireless device list once at startup. Config written after that point is
+# not picked up by reload alone — a full restart is required.
+#
+# 'network restart' kills the SSH session briefly (br-lan reconfigures), so
+# we run it in the background and reconnect on the next _ssh call after a wait.
 
 log "bringing up wireless stack"
-# wifi up triggers 'ubus call network reload' in netifd, which briefly drops
-# the LAN bridge before reconfiguring. Give netifd time to complete the reload
-# and start the wireless driver before polling.
-_ssh "wifi up 2>/dev/null; sleep 10"
+_ssh "/etc/init.d/network restart >/dev/null 2>&1 &" || true
+sleep 15
 
 # wait for AP to come up — netifd + mac80211.sh can take 60-90s in QEMU
 log "waiting for AP (radio1) to become ready"
@@ -248,7 +250,7 @@ while [ "${elapsed}" -lt "${CONNECT_TIMEOUT}" ]; do
 	rt_json="$(_ssh "cat ${RT_FILE}" 2>/dev/null)" || rt_json=""
 	if [ -n "${rt_json}" ]; then
 		status_val="$(printf "%s" "${rt_json}" | \
-			grep -o '"travelmate_status":"[^"]*"' | cut -d'"' -f4)"
+			sed -n 's/.*"travelmate_status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
 		if printf "%s" "${status_val}" | grep -q "${ASSERT_STATUS}"; then
 			break
 		fi
@@ -266,7 +268,7 @@ pass "travelmate_status='${status_val}'"
 
 if [ -n "${ASSERT_ESSID}" ]; then
 	actual_essid="$(printf "%s" "${rt_json}" | \
-		grep -o '"essid":"[^"]*"' | cut -d'"' -f4)"
+		sed -n 's/.*"essid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
 	[ "${actual_essid}" = "${ASSERT_ESSID}" ] \
 		|| die "station.essid: expected '${ASSERT_ESSID}', got '${actual_essid}'"
 	pass "station.essid='${actual_essid}'"
