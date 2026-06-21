@@ -1,0 +1,13 @@
+# Increment-1 happy-path scenario: STA associates with a WPA2 AP, travelmate
+# reaches "connected" state, and runtime.json carries the expected station fields.
+#
+# This is the upstream-calibration baseline: the scenario SHOULD also pass when
+# run against upstream travelmate (TRAVELMATE_VARIANT=upstream). If it doesn't,
+# the runner itself is mis-configured — fix the runner, not the assertion.
+name: happy-wpa2
+ap_ssid: trm-test-wpa2
+ap_psk: TrmTestPassWPA2!
+ap_channel: 6
+ap_encryption: psk2
+assert_status_contains: connected
+assert_station_essid: trm-test-wpa2
