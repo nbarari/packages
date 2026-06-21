@@ -84,19 +84,7 @@ if [ ! -f "${IMG_RAW}" ]; then
 	[ -f "${IMG_RAW}" ] || die "decompression failed (no output file)"
 fi
 
-# fresh overlay so every run starts from a clean base image
-qemu-img create -q -f qcow2 -b "${IMG_RAW}" -F raw "${IMG_OVERLAY}"
-
-# --- tap interface ---
-
-log "setting up tap interface ${TAP_IFACE} (${HOST_TAP_IP} → ${GUEST_IP})"
-
-sudo ip tuntap add dev "${TAP_IFACE}" mode tap 2>/dev/null || true
-sudo ip addr flush dev "${TAP_IFACE}" 2>/dev/null || true
-sudo ip addr add "${HOST_TAP_IP}" dev "${TAP_IFACE}"
-sudo ip link set "${TAP_IFACE}" up
-
-# --- start QEMU ---
+# --- stop any previous QEMU before recreating the overlay it holds open ---
 
 QEMU_PID_FILE="${WORK_DIR}/qemu.pid"
 
@@ -110,6 +98,20 @@ if [ -f "${QEMU_PID_FILE}" ]; then
 	done
 	rm -f "${QEMU_PID_FILE}"
 fi
+
+# fresh overlay so every run starts from a clean base image
+qemu-img create -q -f qcow2 -b "${IMG_RAW}" -F raw "${IMG_OVERLAY}"
+
+# --- tap interface ---
+
+log "setting up tap interface ${TAP_IFACE} (${HOST_TAP_IP} → ${GUEST_IP})"
+
+sudo ip tuntap add dev "${TAP_IFACE}" mode tap 2>/dev/null || true
+sudo ip addr flush dev "${TAP_IFACE}" 2>/dev/null || true
+sudo ip addr add "${HOST_TAP_IP}" dev "${TAP_IFACE}"
+sudo ip link set "${TAP_IFACE}" up
+
+# --- start QEMU ---
 
 qemu-system-x86_64 \
 	-enable-kvm \
@@ -189,32 +191,23 @@ for mod in cfg80211 mac80211 mac80211-hwsim; do
 	_install_ipk "${KMODS_URL}/${pkg}"
 done
 
-log "loading mac80211_hwsim in guest"
-${VM_SSH} "
-	insmod /lib/modules/${KERNEL_VER}/compat.ko 2>/dev/null || true
-	insmod /lib/modules/${KERNEL_VER}/cfg80211.ko
-	insmod /lib/modules/${KERNEL_VER}/mac80211.ko
-	insmod /lib/modules/${KERNEL_VER}/mac80211_hwsim.ko radios=${HWSIM_RADIOS}
-" || die "kmod insmod failed in guest"
-
-${VM_SSH} "ls /sys/class/ieee80211/" 2>/dev/null | grep -q "phy" \
-	|| die "no ieee80211 PHYs visible after hwsim load"
-
-log "mac80211_hwsim loaded (${HWSIM_RADIOS} radios)"
-
 # --- install wireless userland packages ---
 # The x86_64 generic image has no wireless userland (no wpad, iw, wifi-scripts).
 # Install by piping .ipk data archives into the guest — same technique as above.
+#
+# wifi-scripts MUST be installed before loading mac80211_hwsim so the
+# /etc/hotplug.d/ieee80211/10-wifi-detect handler exists when PHYs appear.
+# That handler calls 'wifi config', which runs wifi-detect.uc (populates
+# /etc/board.json with the hwsim PHY entries) and mac80211.uc. Without
+# wifi-detect.uc running at PHY-add time, netifd cannot resolve 'option phy'
+# names and device setup fails. Installing wifi-scripts after insmod would
+# require a rmmod/insmod cycle that shifts PHY indices (phy0→phy6+), breaking
+# any config that references phy0 by name.
 
 log "installing wireless userland packages"
-# wifi-scripts is intentionally NOT installed from the packages feed.
-# The feed version overwrites /lib/netifd/netifd-wireless.sh with a variant
-# that calls drv_*_init_vlan_config / drv_*_init_station_config — functions
-# defined only in a newer mac80211.sh. The base image ships a matching pair;
-# installing the feed wifi-scripts alone breaks mac80211.sh silently and
-# wifi up returns {} with no errors logged.
 
 for mod_pat in \
+	"wifi-scripts_" \
 	"iw_" \
 	"iwinfo_" \
 	"libiwinfo20[0-9]" \
@@ -231,6 +224,26 @@ for mod_pat in \
 	_install_ipk "${PKG_BASE}/${pkg}"
 done
 
+# --- load mac80211_hwsim ---
+# Load after userland so the ieee80211 hotplug handler fires with wifi-scripts
+# in place, populating board.json with phy0..N entries.
+
+log "loading mac80211_hwsim in guest"
+${VM_SSH} "
+	insmod /lib/modules/${KERNEL_VER}/compat.ko 2>/dev/null || true
+	insmod /lib/modules/${KERNEL_VER}/cfg80211.ko
+	insmod /lib/modules/${KERNEL_VER}/mac80211.ko
+	insmod /lib/modules/${KERNEL_VER}/mac80211_hwsim.ko radios=${HWSIM_RADIOS}
+" || die "kmod insmod failed in guest"
+
+${VM_SSH} "ls /sys/class/ieee80211/" 2>/dev/null | grep -q "phy" \
+	|| die "no ieee80211 PHYs visible after hwsim load"
+
+log "mac80211_hwsim loaded (${HWSIM_RADIOS} radios)"
+
+# Give hotplug / wifi config a moment to finish populating board.json.
+sleep 5
+
 # --- start wireless global daemons (hostapd + wpa_supplicant) ---
 # ujail sandboxes both wpa_supplicant and hostapd under wpad, but ujail's root
 # mount in the QEMU environment blocks ubus socket access → neither daemon
@@ -244,6 +257,7 @@ ${VM_SSH} "
 	for pid in \$(ps | awk '/usr.sbin.wpa_supplicant/{print \$1}'); do kill \"\${pid}\"; done 2>/dev/null || true
 	for pid in \$(ps | awk '/usr.sbin.hostapd/{print \$1}'); do kill \"\${pid}\"; done 2>/dev/null || true
 	sleep 1
+	rm -f /var/run/wpa_supplicant/global /var/run/hostapd/global
 	mkdir -p /var/run/wpa_supplicant /var/run/hostapd
 	/usr/sbin/hostapd -B -s -g /var/run/hostapd/global
 	/usr/sbin/wpa_supplicant -B -n -s -g /var/run/wpa_supplicant/global
