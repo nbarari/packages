@@ -2,14 +2,11 @@
 #
 # Runs the integration suite under net/travelmate/tests/integration on a
 # self-hosted runner that has KVM, QEMU, and Linux tap networking available.
-# Requires an ARC (Actions Runner Controller) scale-set on the Proxmox build
-# agent (VM 401) or equivalent — see docs/decisions/2026-06-20-track5-tier2-
-# qemu-integration-runner.md (in the nbarari/travelmate docs repo) for the
-# design and the build-master.sh + deliver-and-build flow.
-#
-# Trigger: workflow_dispatch only until the ARC scale-set is configured.
-# Once the runner label 'travelmate-qemu' is live, add pull_request / push
-# triggers with the same path filter as ci-unit.yml.
+# Target: the travelmate-build-agent VM (Proxmox VM 401, 10.10.1.41) registered
+# with label 'travelmate-qemu'. VM 401 is a dev environment (not always-on),
+# so this workflow is manual-dispatch only — start the VM, dispatch the run,
+# stop the VM when done. See docs/decisions/2026-06-20-track5-tier2-
+# qemu-integration-runner.md (in the nbarari/travelmate docs repo).
 #
 # Scenarios run (in order):
 #   1. happy.yml              — baseline WPA2 connect (upstream calibration)

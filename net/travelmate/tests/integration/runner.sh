@@ -9,9 +9,12 @@
 #   scenario-file: path to scenario YAML (default: scenarios/happy.yml)
 #
 # Environment:
-#   TRAVELMATE_VARIANT  'fork' (default) — installs from source files relative
-#                       to this script. 'upstream' requires guest internet
-#                       access (deferred to Tier-2 increment-2).
+#   TRAVELMATE_VARIANT  'fork' (default) — installs from source files in
+#                       this repo. 'upstream' — downloads the upstream
+#                       travelmate source from GitHub (host needs internet;
+#                       guest does not).
+#   UPSTREAM_REF        git ref used when TRAVELMATE_VARIANT=upstream
+#                       (default: master).
 #   OPENWRT_IMAGE       local path or URL for OpenWrt x86_64 img.gz
 #   GUEST_IP            OpenWrt LAN IP (default: 192.168.1.1)
 #   TAP_IFACE           tap interface name (default: trmtap0)
@@ -33,6 +36,7 @@ set -e
 INTEGRATION_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCENARIO="${1:-${INTEGRATION_DIR}/scenarios/happy.yml}"
 TRAVELMATE_VARIANT="${TRAVELMATE_VARIANT:-fork}"
+UPSTREAM_REF="${UPSTREAM_REF:-master}"
 GUEST_IP="${GUEST_IP:-192.168.1.1}"
 TAP_IFACE="${TAP_IFACE:-trmtap0}"
 HOST_TAP_IP="${HOST_TAP_IP:-192.168.1.100/24}"
@@ -245,24 +249,29 @@ fi
 # --- install travelmate ---
 
 if [ "${TRAVELMATE_VARIANT}" = "upstream" ]; then
-	log "upstream calibration requires guest internet access (deferred to increment-2)"
-	die "upstream variant not yet supported — rerun with TRAVELMATE_VARIANT=fork"
+	# Download upstream source files from GitHub on the host (no guest internet
+	# needed — the guest firewall blocks outbound TCP in this tap-only setup).
+	log "installing upstream travelmate (openwrt/packages ref: ${UPSTREAM_REF})"
+	UPSTREAM_BASE="https://raw.githubusercontent.com/openwrt/packages/${UPSTREAM_REF}/net/travelmate/files"
+	curl -fsSL "${UPSTREAM_BASE}/travelmate-functions.sh" \
+		| _ssh "cat > /usr/lib/travelmate-functions.sh"
+	curl -fsSL "${UPSTREAM_BASE}/travelmate-service.sh" \
+		| _ssh "mkdir -p /usr/bin && cat > /usr/bin/travelmate-service.sh && chmod +x /usr/bin/travelmate-service.sh"
+	curl -fsSL "${UPSTREAM_BASE}/travelmate.init" \
+		| _ssh "cat > /etc/init.d/travelmate && chmod +x /etc/init.d/travelmate"
+else
+	log "installing fork travelmate from source"
+	TRM_FILES="${INTEGRATION_DIR}/../../files"
+	trm_init="${TRM_FILES}/travelmate.init"
+	trm_svc="${TRM_FILES}/travelmate-service.sh"
+	trm_lib="${TRM_FILES}/travelmate-functions.sh"
+	[ -f "${trm_init}" ] || die "travelmate.init not found: ${trm_init}"
+	[ -f "${trm_svc}"  ] || die "travelmate-service.sh not found: ${trm_svc}"
+	[ -f "${trm_lib}"  ] || die "travelmate-functions.sh not found: ${trm_lib}"
+	cat "${trm_lib}"  | _ssh "cat > /usr/lib/travelmate-functions.sh"
+	cat "${trm_svc}"  | _ssh "mkdir -p /usr/bin && cat > /usr/bin/travelmate-service.sh && chmod +x /usr/bin/travelmate-service.sh"
+	cat "${trm_init}" | _ssh "cat > /etc/init.d/travelmate && chmod +x /etc/init.d/travelmate"
 fi
-
-log "installing fork travelmate from source"
-
-TRM_FILES="${INTEGRATION_DIR}/../../files"
-trm_init="${TRM_FILES}/travelmate.init"
-trm_svc="${TRM_FILES}/travelmate-service.sh"
-trm_lib="${TRM_FILES}/travelmate-functions.sh"
-
-[ -f "${trm_init}" ] || die "travelmate.init not found: ${trm_init}"
-[ -f "${trm_svc}"  ] || die "travelmate-service.sh not found: ${trm_svc}"
-[ -f "${trm_lib}"  ] || die "travelmate-functions.sh not found: ${trm_lib}"
-
-cat "${trm_lib}"  | _ssh "cat > /usr/lib/travelmate-functions.sh"
-cat "${trm_svc}"  | _ssh "mkdir -p /usr/bin && cat > /usr/bin/travelmate-service.sh && chmod +x /usr/bin/travelmate-service.sh"
-cat "${trm_init}" | _ssh "cat > /etc/init.d/travelmate && chmod +x /etc/init.d/travelmate"
 
 _ssh "mkdir -p /etc/travelmate && /etc/init.d/travelmate enable"
 log "travelmate installed and enabled"
@@ -301,8 +310,16 @@ done
 pass "travelmate_status='${status_val}'"
 
 if [ -n "${ASSERT_ESSID}" ]; then
+	# Fork emits a standalone "essid" key; upstream folds it into "station_id"
+	# as "radio/essid/bssid". Try standalone first, then parse station_id.
 	actual_essid="$(printf "%s" "${rt_json}" | \
 		sed -n 's/.*"essid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+	if [ -z "${actual_essid}" ] || [ "${actual_essid}" = "-" ]; then
+		station_id="$(printf "%s" "${rt_json}" | \
+			sed -n 's/.*"station_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | \
+			tr -d '\\')"
+		actual_essid="$(printf "%s" "${station_id}" | cut -d'/' -f2)"
+	fi
 	[ "${actual_essid}" = "${ASSERT_ESSID}" ] \
 		|| die "station.essid: expected '${ASSERT_ESSID}', got '${actual_essid}'"
 	pass "station.essid='${actual_essid}'"
