@@ -1,0 +1,27 @@
+#!/bin/sh
+# udhcpc hook: stage DHCP option 114 (RFC 8910 captive-portal URI) for f_portal.
+#
+# Path duplicates trm_rundir intentionally — this script runs outside the
+# travelmate service context and cannot source the function library.
+# If trm_rundir changes, update this path in tandem.
+#
+trm_portalfile="/var/run/travelmate/travelmate.portal"
+trm_portaltmp="${trm_portalfile}.tmp"
+
+case "${1}" in
+	bound|renew)
+		case "${opt114}" in
+			http://*|https://*)
+				[ -d "${trm_portalfile%/*}" ] || exit 0
+				printf "%s" "${opt114}" >"${trm_portaltmp}" && \
+					mv "${trm_portaltmp}" "${trm_portalfile}"
+				;;
+			*)
+				rm -f "${trm_portalfile}"
+				;;
+		esac
+		;;
+	deconfig|leasefail)
+		rm -f "${trm_portalfile}"
+		;;
+esac
