@@ -53,6 +53,8 @@ trm_metricsfile="${trm_rundir}/travelmate.metrics"
 trm_rebindfile="${trm_rundir}/travelmate.rebind"
 trm_captiveurl="http://detectportal.firefox.com"
 trm_useragent="Mozilla/5.0 (compatible)"
+trm_rfcportal="1"
+trm_portalfile="${trm_rundir}/travelmate.portal"
 
 # ensure runtime directory exists
 #
@@ -171,6 +173,7 @@ f_conf() {
 	if ! json_select data >/dev/null 2>&1; then
 		: >"${trm_rtfile}"
 		: >"${trm_metricsfile}"
+		rm -f "${trm_portalfile}"
 		json_init
 		json_add_object "data"
 	fi
@@ -219,6 +222,7 @@ f_term() {
 	: >"${trm_rtfile}"
 	: >"${trm_metricsfile}"
 	: >"${trm_pidfile}"
+	rm -f "${trm_portalfile}"
 	exit 0
 }
 
@@ -815,15 +819,79 @@ f_addsta() {
 	f_log "debug" "f_addsta    ::: radio: ${radio:-"-"}, essid: ${essid}, opensta/maxautoadd: ${cnt}/${trm_maxautoadd:-"-"}, new_uplink: ${new_uplink}, offset: ${offset}"
 }
 
+# consume RFC 8910 captive-portal JSON API (DHCP option 114)
+# returns: "" (fall through to detectportal), "net ok", or "net cp '<host>'"
+#
+f_portal() {
+	local portal_uri portal_json captive portal_url portal_host
+
+	portal_uri="$("${trm_catcmd}" "${trm_portalfile}" 2>/dev/null)"
+	[ -n "${portal_uri}" ] || return 0
+
+	# strict mode: refuse non-TLS API fetch to honour operator's HTTPS-only intent
+	#
+	if [ "${trm_captive_strict}" = "1" ]; then
+		case "${portal_uri}" in
+			http://*) return 0 ;;
+		esac
+	fi
+
+	# force IPv4: the URI came from an IPv4 DHCP option; avoids dual-stack timeout
+	#
+	portal_json="$("${trm_fetchcmd}" -s -4 --max-time "$((trm_maxwait / 6))" "${portal_uri}" 2>/dev/null)"
+	[ -n "${portal_json}" ] || return 0
+
+	captive="$(printf "%s" "${portal_json}" | "${trm_jsoncmd}" -ql1 -e '@.captive' 2>/dev/null)"
+	case "${captive}" in
+		false)
+			f_log "debug" "f_portal    ::: uri: ${portal_uri}, captive: false, result: net ok"
+			printf "net ok"
+			return
+			;;
+		true) ;;
+		*) return 0 ;;
+	esac
+
+	portal_url="$(printf "%s" "${portal_json}" | "${trm_jsoncmd}" -ql1 -e '@["user-portal-url"]' 2>/dev/null)"
+	case "${portal_url}" in
+		http://*|https://*) ;;
+		*) return 0 ;;
+	esac
+
+	# extract host via POSIX parameter expansion (no eval, no subshell exec)
+	# reject single quotes — DNS names/IP literals cannot contain them (RFC 1123 / RFC 2396)
+	#
+	portal_host="${portal_url#*://}"
+	portal_host="${portal_host%%/*}"
+	case "${portal_host}" in
+		*\'*) return 0 ;;
+	esac
+
+	f_log "debug" "f_portal    ::: uri: ${portal_uri}, captive: true, host: ${portal_host}, result: net cp"
+	printf "net cp '%s'" "${portal_host}"
+}
+
 # check net status
 #
 f_net() {
-	local parse err_msg raw json_raw html_raw html_cp js_cp json_ec json_rc json_cp json_cp_url json_ed url="${trm_captiveurl}" result="net nok"
+	local parse err_msg raw json_raw html_raw html_cp js_cp json_ec json_rc json_cp json_cp_url json_ed rfc_result url="${trm_captiveurl}" result="net nok"
 
 	# strict mode: force https so a captive portal or on-path attacker cannot
 	# spoof a clean http 200 to fake internet availability (no cp auto-login)
 	#
 	[ "${trm_captive_strict}" = "1" ] && url="https://${trm_captiveurl#http*://}"
+
+	# RFC 8910: try structured JSON API first when a portal file is present
+	#
+	if [ "${trm_rfcportal}" = "1" ] && [ -s "${trm_portalfile}" ]; then
+		rfc_result="$(f_portal)"
+		case "${rfc_result}" in
+			"net ok"|"net cp"*)
+				printf "%s" "${rfc_result}"
+				return
+				;;
+		esac
+	fi
 
 	# fetch captive-detection url, curl appends '%{json}' metadata after the response body
 	#

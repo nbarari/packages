@@ -60,6 +60,9 @@ define Package/travelmate/install
 	$(INSTALL_CONF) ./files/mail.template $(1)/etc/travelmate
 	$(INSTALL_BIN) ./files/travelmate.vpn $(1)/etc/travelmate
 	$(INSTALL_BIN) ./files/*.login $(1)/etc/travelmate
+
+	$(INSTALL_DIR) $(1)/etc/udhcpc.user.d
+	$(INSTALL_BIN) ./files/50-travelmate-portal $(1)/etc/udhcpc.user.d/50-travelmate-portal
 endef
 
 $(eval $(call BuildPackage,travelmate))
